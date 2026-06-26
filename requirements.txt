@@ -1,6 +1,4 @@
 streamlit
 numpy
-scipy
 soundfile
-pydub
-audioop-lts
+pedalboard==0.5.3
