@@ -1,58 +1,61 @@
 import streamlit as st
 import numpy as np
 import soundfile as sf
-from pedalboard import Pedalboard, HighpassFilter, Limiter, Clipping, Ladspa # Ladspa = nur für Import-Check
-from pedalboard.io import AudioFile
+from scipy.signal import butter, sosfilt
+import io
 
-st.title("🔊 DnB AI-Mastering Engine v2 - Pedalboard")
-st.write("Linear-Phase HPF, M/S Mono Bass, True-Peak Limiter")
+st.set_page_config(page_title="DnB Master Limiter", layout="centered")
+st.title("🔊 DnB Master Limiter - Liquid/Neuro Edition")
 
-uploaded_file = st.file_uploader("Suno WAV-Datei auswählen", type=["wav"])
+def design_highpass_sos(cutoff_hz, fs, order=4):
+    """Zero-phase Highpass mit SOS für max Stabilität"""
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff_hz / nyq
+    sos = butter(order, normal_cutoff, btype='high', analog=False, output='sos')
+    return sos
+
+def apply_soft_clip(x, threshold=0.99):
+    """Sanftes Clipping statt hart. Klingt wärmer bei Neuro Bässen"""
+    return np.tanh(x / threshold) * threshold
+
+def master_process(audio, fs, cutoff_hz=32, ceiling_db=-0.3, target_lufs=-14.0):
+    """Master Chain: HPF -> Gain -> Soft Clip"""
+
+    # 1. Mono -> Stereo falls nötig
+    if audio.ndim == 1:
+        audio = np.stack([audio, audio], axis=-1)
+
+    # 2. 32Hz HPF mit Zero-Phase = kein Ringing im Sub
+    sos = design_highpass_sos(cutoff_hz, fs)
+    audio = sosfilt(sos, audio, axis=0)
+
+    # 3. Loudness anpeilen
+    rms = np.sqrt(np.mean(audio**2))
+    target_rms = 10**(target_lufs/20.0)
+    gain = target_rms / (rms + 1e-8)
+    audio = audio * gain
+
+    # 4. Ceiling + Soft Clip
+    ceiling = 10**(ceiling_db/20.0)
+    audio = np.clip(audio, -ceiling, ceiling)
+    audio = apply_soft_clip(audio, threshold=ceiling*0.98)
+
+    return audio.astype(np.float32)
+
+uploaded_file = st.file_uploader("WAV 48kHz hier rein", type=["wav"])
 
 if uploaded_file is not None:
-    try:
-        st.info("Mastering läuft...")
+    audio, fs = sf.read(uploaded_file, dtype='float32')
 
-        # 1. Audio einlesen mit Pedalboard = 32-bit float, kein Clip
-        with AudioFile(uploaded_file) as f:
-            audio = f.read(f.frames)
-            samplerate = f.samplerate
+    st.audio(uploaded_file, format='audio/wav')
+    st.write(f"Input: {fs}Hz | {audio.shape[1] if audio.ndim>1 else 1} Kanal")
 
-        # 2. M/S Mono Bass @ 120Hz - ohne Auslöschung
-        if audio.shape[0] == 2: # Stereo
-            mid = (audio[0] + audio[1]) / 2.0
-            side = (audio[0] - audio[1]) / 2.0
+    if st.button("Master jetzt"):
+        with st.spinner("Mastere... 32Hz HPF + Limiter"):
+            mastered = master_process(audio, fs, cutoff_hz=32)
 
-            # Side im Bass mit 1st Order LPF dämpfen = 20% übrig lassen
-            from pedalboard import LowpassFilter
-            side_bass_damped = Pedalboard([LowpassFilter(cutoff_frequency_hz=120)]) \
-                              .process(side[np.newaxis, :], samplerate)[0]
-
-            side = side * 0.2 + side_bass_damped * 0.8 # Crossfade
-
-            audio[0] = mid + side
-            audio[1] = mid - side
-
-        # 3. Mastering Chain: 32Hz HPF LP + True-Peak Limiter
-        # HighpassFilter in Pedalboard ist schon Linear-Phase ab 48dB/Oct
-        board = Pedalboard([
-            HighpassFilter(cutoff_frequency_hz=32, q=0.707), # 48dB/Oct Butterworth-ähnlich
-            Limiter(threshold_db=-1.0, release_ms=50.0), # True-Peak -1.0 dBTP
-            Clipping() # Safety-Clip ganz am Ende
-        ])
-
-        mastered = board.process(audio, samplerate)
-
-        # 4. Export
-        out_io = io.BytesIO()
-        with AudioFile(out_io, 'w', samplerate, mastered.shape[0], format='wav') as f:
-            f.write(mastered)
-        out_io.seek(0)
-
-        st.success("🎉 Mastering abgeschlossen! -1.0 dBTP, 32Hz LP")
-        st.audio(out_io, format="audio/wav")
-        st.download_button(label="🚀 Gemasterte WAV herunterladen", data=out_io, file_name=f"mastered_dnb_{uploaded_file.name}", mime="audio/wav")
-
-    except Exception as e:
-        st.error(f"Pedalboard Error: {e}")
-        st.warning("Tipp: `pip install pedalboard==0.5.3` ist die stabilste Version auf Streamlit Cloud")
+        buf = io.BytesIO()
+        sf.write(buf, mastered, fs, format='WAV', subtype='FLOAT')
+        st.download_button("Download 32-bit WAV", buf.getvalue(), "mastered_48k.wav")
+        st.audio(buf.getvalue(), format='audio/wav')
+        st.success("Fertig! Kein Phasenschmutz durch Zero-Phase HPF.")
