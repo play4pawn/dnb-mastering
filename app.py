@@ -38,7 +38,7 @@ if uploaded_file is not None:
     sound = AudioSegment.from_wav(temp_io)
     
     # +4.5 dB Gain für den kommerziellen DnB-Druck
-    louder_sound = sound + 4.5
+    louder_sound = sound + 3.5
     
     # Brickwall Limiter-Effekt (Verhindert Clipping bei Spitzen über -0.1 dB)
     mastered_sound = louder_sound.normalize(headroom=0.1)
