@@ -45,17 +45,21 @@ def master_process(audio, fs, cutoff_hz=32, ceiling_db=-0.3, target_lufs=-14.0):
 uploaded_file = st.file_uploader("WAV 48kHz hier rein", type=["wav"])
 
 if uploaded_file is not None:
+    original_name = uploaded_file.name # <-- NEU: Name merken
     audio, fs = sf.read(uploaded_file, dtype='float32')
 
     st.audio(uploaded_file, format='audio/wav')
-    st.write(f"Input: {fs}Hz | {audio.shape[1] if audio.ndim>1 else 1} Kanal")
+    st.write(f"Input: {fs}Hz | {audio.shape[1] if audio.ndim>1 else 1} Kanal | {original_name}")
 
     if st.button("Master jetzt"):
         with st.spinner("Mastere... 32Hz HPF + Limiter"):
             mastered = master_process(audio, fs, cutoff_hz=32)
 
         buf = io.BytesIO()
-        sf.write(buf, mastered, fs, format='WAV', subtype='FLOAT')
-        st.download_button("Download 32-bit WAV", buf.getvalue(), "mastered_48k.wav")
+        sf.write(buf, mastered, fs, format='WAV', subtype='PCM_24') # <-- NEU: 24-bit
+
+        new_filename = f"Mastered {original_name}" # <-- NEU: Name bauen
+
+        st.download_button("Download WAV", buf.getvalue(), new_filename) # <-- NEU: Name nutzen
         st.audio(buf.getvalue(), format='audio/wav')
         st.success("Fertig! Kein Phasenschmutz durch Zero-Phase HPF.")
