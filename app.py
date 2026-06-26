@@ -5,28 +5,42 @@ from scipy.signal import butter, sosfilt
 from pydub import AudioSegment
 import io
 
-st.title("🔊 DnB AI-Mastering Engine (with Exciter)")
-st.write("Bändige den Reese-Bass und erzeuge frische Obertöne im Hochtonbereich.")
+st.title("🔊 DnB AI-Mastering Engine (with Phase-Fix)")
+st.write("Bändige den Reese-Bass, korrigiere Phasenprobleme und erzeuge frische Obertöne.")
 
 uploaded_file = st.file_uploader("Suno WAV-Datei auswählen", type=["wav"])
 
 if uploaded_file is not None:
-    st.info("Mastering & Spectral Recovery laufen...")
+    st.info("Phase wird korrigiert & Mastering läuft...")
     
     # 1. Audio einlesen
     data, samplerate = sf.read(uploaded_file)
     
-    # 2. 35Hz Low-Cut Filter
-    sos = butter(12, 30, 'hp', fs=samplerate, output='sos')
-    clean_data = sosfilt(sos, data, axis=0)
+    # Falls Datei Stereo ist (2 Kanäle), korrigieren wir die Phase im Bassbereich
+    if len(data.shape) > 1 and data.shape[1] == 2:
+        # Frequenzbänder für den Bass-Split definieren (120 Hz)
+        sos_low = butter(12, 120, 'lp', fs=samplerate, output='sos')
+        sos_high = butter(12, 120, 'hp', fs=samplerate, output='sos')
+        
+        # Audio in Bass und Höhen trennen
+        bass_part = sosfilt(sos_low, data, axis=0)
+        high_part = sosfilt(sos_high, data, axis=0)
+        
+        # Phasen-Fix: Den Bassbereich komplett Mono schalten (Mittelwert aus links & rechts)
+        mono_bass = np.mean(bass_part, axis=1)
+        bass_part[:, 0] = mono_bass
+        bass_part[:, 1] = mono_bass
+        
+        # Bass (jetzt Phasen-korrigiert in Mono) und Stereo-Höhen wieder zusammenfügen
+        data = bass_part + high_part
     
-    # 3. DYNAMIC EXCITER / SPECTRAL RECOVERY (Pure Python)
-    # Wir erzeugen ganz leichte, harmonische Obertöne durch sanfte Sättigung
-    # Das simuliert die verlorenen Frequenzen über 15 kHz
-    excitation_factor = 0.05  # Dezente Stärke, um Rauschen zu vermeiden
+    # 2. 30Hz Low-Cut Filter (Jetzt auf dem phasen-sauberen Signal)
+    sos_cut = butter(12, 30, 'hp', fs=samplerate, output='sos')
+    clean_data = sosfilt(sos_cut, data, axis=0)
+    
+    # 3. Dynamic Exciter / Spectral Recovery
+    excitation_factor = 0.05
     excited_data = clean_data + (np.sin(clean_data * np.pi * 0.5) * excitation_factor)
-    
-    # Signal begrenzen, damit mathematisch nichts übersteuert
     excited_data = np.clip(excited_data, -1.0, 1.0)
     
     # Zwischenspeichern für Pydub-Bearbeitung
@@ -34,13 +48,9 @@ if uploaded_file is not None:
     sf.write(temp_io, excited_data, samplerate, subtype='PCM_16', format='WAV')
     temp_io.seek(0)
     
-    # 4. Lautstärke-Maximierung und Peak-Limiting via Pydub
+    # 4. Lautstärke-Maximierung und Peak-Limiting (+3.5 dB für perfekte Dynamik)
     sound = AudioSegment.from_wav(temp_io)
-    
-    # +4.5 dB Gain für den kommerziellen DnB-Druck
     louder_sound = sound + 3.5
-    
-    # Brickwall Limiter-Effekt (Verhindert Clipping bei Spitzen über -0.1 dB)
     mastered_sound = louder_sound.normalize(headroom=0.1)
     
     # 5. Datei für den Download bereitmachen
@@ -48,6 +58,6 @@ if uploaded_file is not None:
     mastered_sound.export(wav_io, format="wav")
     wav_io.seek(0)
     
-    st.success("🎉 Mastering & Excitation erfolgreich abgeschlossen!")
+    st.success("🎉 Phase korrigiert & Mastering abgeschlossen!")
     st.audio(wav_io, format="audio/wav")
-    st.download_button(label="🚀 Gemasterte WAV mit Exciter herunterladen", data=wav_io, file_name=f"mastered_exciter_{uploaded_file.name}", mime="audio/wav")
+    st.download_button(label="🚀 Gemasterte WAV (Phasen-optimiert) herunterladen", data=wav_io, file_name=f"mastered_phase_fixed_{uploaded_file.name}", mime="audio/wav")
