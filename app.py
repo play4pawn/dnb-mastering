@@ -17,7 +17,7 @@ if uploaded_file is not None:
     data, samplerate = sf.read(uploaded_file)
     
     # 2. 35Hz Low-Cut Filter
-    sos = butter(12, 35, 'hp', fs=samplerate, output='sos')
+    sos = butter(12, 30, 'hp', fs=samplerate, output='sos')
     clean_data = sosfilt(sos, data, axis=0)
     
     # 3. DYNAMIC EXCITER / SPECTRAL RECOVERY (Pure Python)
