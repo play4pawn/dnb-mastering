@@ -2,3 +2,4 @@ streamlit
 numpy
 scipy
 soundfile
+pyloudnorm==0.1.1
