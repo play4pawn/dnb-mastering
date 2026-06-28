@@ -19,7 +19,7 @@ def apply_soft_clip(x, threshold=0.99):
 
 def dynamic_resonance_suppressor(audio, fs, bands=[(250, 3.0), (2500, 2.5), (7000, 2.0)], strength=0.5):
     """
-    Soothe-Light: Dynamischer Multiband Cut
+    Soothe-Light: Dynamischer Multiband Cut - Stereo Safe v4.2
     bands: [(freq, Q),...] - Die Problemzonen
     strength: 0.0 = aus, 1.0 = aggressiv
     """
@@ -36,20 +36,27 @@ def dynamic_resonance_suppressor(audio, fs, bands=[(250, 3.0), (2500, 2.5), (700
 
         # 2. Envelope Follower: Wie laut ist das Band gerade?
         envelope = np.abs(band_energy)
+
+        # Attack/Release für jeden Kanal einzeln - Stereo Safe
         attack = 0.003
         release = 0.1
         env_smooth = np.zeros_like(envelope)
+        env_smooth[0] = envelope[0] # Init ersten Wert gegen IndexError
+
         for i in range(1, len(envelope)):
-            if envelope[i] > env_smooth[i-1]:
-                env_smooth[i] = attack * envelope[i] + (1-attack) * env_smooth[i-1]
-            else:
-                env_smooth[i] = release * envelope[i] + (1-release) * env_smooth[i-1]
+            # Kanal-weise vergleichen mit np.where
+            env_smooth[i] = np.where(
+                envelope[i] > env_smooth[i-1],
+                attack * envelope[i] + (1-attack) * env_smooth[i-1], # Attack
+                release * envelope[i] + (1-release) * env_smooth[i-1] # Release
+            )
 
         # 3. Gain Reduction: Je lauter das Band, desto mehr Cut
         threshold_db = -25
         ratio = 3.0 * strength
         threshold_lin = 10**(threshold_db/20.0)
 
+        # Gain Reduction nur da wo nötig, sonst 1.0
         gain_reduction = np.ones_like(env_smooth)
         mask = env_smooth > threshold_lin
         gain_reduction[mask] = (threshold_lin / env_smooth[mask]) ** (1 - 1/ratio)
@@ -74,7 +81,7 @@ def master_process(audio, fs, cutoff_hz=32, ceiling_db=-0.3, target_lufs=-14.0,
     if audio.ndim == 1:
         audio = np.stack([audio, audio], axis=-1)
 
-    # 1. 32Hz HPF Zero-Phase
+    # 1. 32Hz HPF
     sos = design_highpass_sos(cutoff_hz, fs)
     audio = sosfilt(sos, audio, axis=0)
 
@@ -127,7 +134,7 @@ if uploaded_file is not None:
         buf.seek(0)
 
         data = buf.getvalue()
-        # NEU: Kurze Tags C/S/E/SE
+        # Kurze Tags C/S/E/SE
         tags = []
         if use_soothe: tags.append("S")
         if use_exciter: tags.append("E")
