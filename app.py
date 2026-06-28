@@ -4,6 +4,7 @@ import soundfile as sf
 from scipy.signal import butter, sosfilt, iirpeak, lfilter
 import io
 import gc
+import pyloudnorm as pyln
 
 st.set_page_config(page_title="DnB Master Limiter", layout="centered")
 st.title("🔊 DnB Master Limiter - Soothe-Light Edition")
@@ -16,6 +17,18 @@ def design_highpass_sos(cutoff_hz, fs, order=4):
 
 def apply_soft_clip(x, threshold=0.99):
     return np.tanh(x / threshold) * threshold
+
+def measure_lufs(audio, fs):
+    """
+    Misst Integrated LUFS nach EBU R128 für Pre/Post Vergleich
+    """
+    meter = pyln.Meter(fs)
+    if audio.ndim > 1:
+        audio_mono = np.mean(audio, axis=1)
+    else:
+        audio_mono = audio
+    lufs = meter.integrated_loudness(audio_mono)
+    return lufs
 
 def dynamic_resonance_suppressor(audio, fs, bands=[(250, 3.0), (2500, 2.5), (7000, 2.0)], strength=0.5):
     """
@@ -109,9 +122,11 @@ uploaded_file = st.file_uploader("WAV 48kHz hier rein", type=["wav"])
 if uploaded_file is not None:
     original_name = uploaded_file.name
     audio, fs = sf.read(uploaded_file, dtype='float32')
+    if audio.ndim == 1:
+        audio = np.stack([audio, audio], axis=-1)
 
     st.audio(uploaded_file, format='audio/wav')
-    st.write(f"Input: {fs}Hz | {audio.shape[1] if audio.ndim>1 else 1} Kanal | {original_name}")
+    st.write(f"Input: {fs}Hz | {audio.shape[1]} Kanal | {original_name}")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -122,10 +137,32 @@ if uploaded_file is not None:
 
     if st.button("Master jetzt"):
         with st.spinner("Mastere... Soothe + Exciter + Limiter"):
+            # Pre LUFS messen
+            lufs_pre = measure_lufs(audio, fs)
+
             mastered = master_process(audio, fs, cutoff_hz=32,
                                     use_exciter=use_exciter,
                                     use_soothe=use_soothe,
                                     soothe_strength=soothe_strength)
+
+            # Post LUFS messen
+            lufs_post = measure_lufs(mastered, fs)
+            delta = lufs_post - lufs_pre
+
+        # LUFS Meter anzeigen
+        st.subheader("📊 LUFS Analyse")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Pre Master", f"{lufs_pre:.1f} LUFS", "Input")
+        col2.metric("Post Master", f"{lufs_post:.1f} LUFS", f"{delta:+.1f} LU")
+        col3.metric("Target", "-14.0 LUFS", "Streaming")
+
+        # Ampel-System
+        if lufs_post > -13.5:
+            st.warning("⚠️ Über -14 LUFS: Streaming regelt runter.")
+        elif lufs_post < -16.0:
+            st.info("💡 Unter -16 LUFS: Noch Headroom da.")
+        else:
+            st.success("✅ Sweet Spot für Spotify/YouTube")
 
         buf = io.BytesIO()
         sf.write(buf, mastered, fs, format='WAV', subtype='PCM_24')
