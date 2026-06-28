@@ -105,10 +105,12 @@ def master_process(audio, fs, cutoff_hz=32, ceiling_db=-0.3, target_lufs=-14.0,
         audio = add_exciter(audio, fs, crossover_hz=8000, drive=2.2, mix=0.15)
 
     # 4. Loudness
-    rms = np.sqrt(np.mean(audio**2))
-    target_rms = 10**(target_lufs/20.0)
-    gain = target_rms / (rms + 1e-8)
-    audio = audio * gain
+    # Neu: Echte LUFS Normalisierung
+    meter = pyln.Meter(fs)
+    current_lufs = meter.integrated_loudness(np.mean(audio, axis=1))
+    gain_db = target_lufs - current_lufs
+    gain_lin = 10**(gain_db / 20.0)
+    audio = audio * gain_lin
 
     # 5. Ceiling + Soft Clip
     ceiling = 10**(ceiling_db/20.0)
